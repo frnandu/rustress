@@ -78,7 +78,7 @@ pub async fn run_migrations(pool: &SqlitePool) {
             metadata TEXT,
             settled_at DATETIME,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users (id)
+            FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
         )
         "#,
     )

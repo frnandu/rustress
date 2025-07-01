@@ -133,25 +133,29 @@ async fn nip05(
     pool: web::Data<Arc<SqlitePool>>,
     req: HttpRequest,
     query: web::Query<HashMap<String, String>>,
-) -> impl Responder {
-    let username = match query.get("name") {
-        Some(u) => u,
-        None => return HttpResponse::Ok().json(serde_json::json!({"names": {}})),
-    };
-    
-    // Extract domain from Host header
-    let host = req.headers().get("host")
-        .and_then(|h| h.to_str().ok())
-        .unwrap_or("localhost:8080");
-    
-    // Remove port from host if present
-    let domain = host.split(':').next().unwrap_or(host);
-    
-    match get_user_by_username_and_domain(&pool, username, domain).await {
-        Ok(user) => HttpResponse::Ok().json(serde_json::json!({
-            "names": { user.username: user.nostr_pubkey }
-        })),
-        Err(_) => HttpResponse::Ok().json(serde_json::json!({"names": {}})),
+) -> HttpResponse {
+    if let Some(username) = query.get("name") {
+        // Extract domain from Host header
+        let host = req.headers().get("host")
+            .and_then(|h| h.to_str().ok())
+            .unwrap_or("localhost:8080");
+        // Remove port from host if present
+        let domain = host.split(':').next().unwrap_or(host);
+
+        let user_result = get_user_by_username_and_domain(&pool, username, domain).await;
+        match user_result {
+            Ok(user) => {
+                let hex_pubkey = user.nostr_pubkey.as_ref().and_then(|npub| npub_to_hex(npub));
+                HttpResponse::Ok().json(serde_json::json!({
+                    "names": { user.username: hex_pubkey }
+                }))
+            },
+            Err(_) => {
+                HttpResponse::Ok().json(serde_json::json!({"names": {}}))
+            },
+        }
+    } else {
+        HttpResponse::Ok().json(serde_json::json!({"names": {}}))
     }
 }
 
