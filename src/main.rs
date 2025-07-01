@@ -122,9 +122,14 @@ async fn lnurlp(
     });
     // Add user's nostrPubkey (converted from npub to hex if needed)
     if let Some(ref nostr_pubkey) = user.nostr_pubkey {
-        if let Some(hex_pubkey) = npub_to_hex(nostr_pubkey).or_else(|| Some(nostr_pubkey.clone())) {
-            resp["nostrPubkey"] = serde_json::json!(hex_pubkey);
-            resp["allowsNostr"] = serde_json::json!(true);
+fixe        // Use the NIP57_PRIVATE_KEY to derive the public key for nostrPubkey
+        if let Ok(sk_str) = std::env::var("NIP57_PRIVATE_KEY") {
+            if let Ok(sk) = SdkSecretKey::from_str(&sk_str) {
+                let keys = SdkKeys::new(sk);
+                let pubkey = keys.public_key();
+                resp["nostrPubkey"] = serde_json::json!(pubkey.to_string());
+                resp["allowsNostr"] = serde_json::json!(true);
+            }
         }
     }
     HttpResponse::Ok().json(resp)
@@ -465,58 +470,6 @@ async fn subscribe_nwc_notifications(pool: Arc<SqlitePool>) {
     }
 }
 
-async fn well_known_lnurlp(
-    pool: web::Data<Arc<SqlitePool>>,
-    req: HttpRequest,
-    path: web::Path<String>,
-) -> impl Responder {
-    let username = path.into_inner();
-
-    // Extract domain from Host header
-    let host = req.headers().get("host")
-        .and_then(|h| h.to_str().ok())
-        .unwrap_or("localhost:8080");
-    
-    // Remove port from host if present
-    let domain = host.split(':').next().unwrap_or(host);
-
-    // Check if user exists
-    let user = match get_user_by_username_and_domain(&pool, &username, domain).await {
-        Ok(u) => u,
-        Err(_) => {
-            return HttpResponse::NotFound()
-                .json(serde_json::json!({"status": "ERROR", "reason": "User not found"}));
-        }
-    };
-
-    let scheme = if req.connection_info().scheme() == "https" { "https" } else { "http" };
-    let base_url = format!("{}://{}", scheme, host);
-
-    let mut resp = serde_json::json!({
-        "tag": "payRequest",
-        "commentAllowed": 255,
-        "callback": format!("{}/lnurlp/{}/callback", base_url, user.username),
-        "minSendable": 1000,
-        "maxSendable": 10000000000u64,
-        "metadata": get_lnurl_metadata(&user.username, &user.domain),
-        "payerData": {
-            "name": {"mandatory": false},
-            "email": {"mandatory": false},
-            "pubkey": {"mandatory": false}
-        }
-    });
-
-    // Add user's nostrPubkey (converted from npub to hex if needed)
-    if let Some(ref nostr_pubkey) = user.nostr_pubkey {
-        if let Some(hex_pubkey) = npub_to_hex(nostr_pubkey).or_else(|| Some(nostr_pubkey.clone())) {
-            resp["nostrPubkey"] = serde_json::json!(hex_pubkey);
-            resp["allowsNostr"] = serde_json::json!(true);
-        }
-    }
-
-    HttpResponse::Ok().json(resp)
-}
-
 // Admin authentication endpoints
 async fn admin_login(
     config: web::Data<Arc<AppConfig>>,
@@ -686,7 +639,7 @@ async fn main() -> std::io::Result<()> {
             .route("/lnurlp/{username}", web::get().to(lnurlp))
             .route(
                 "/.well-known/lnurlp/{username}",
-                web::get().to(well_known_lnurlp),
+                web::get().to(lnurlp),
             )
             .route("/.well-known/nostr.json", web::get().to(nip05))
             .route(
