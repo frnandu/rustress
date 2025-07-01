@@ -416,6 +416,10 @@ async fn subscribe_nwc_notifications(pool: Arc<SqlitePool>) {
                                             Tag::event(zap_request_event.id),
                                             Tag::from_standardized_without_cell(TagStandard::Bolt11(bolt11.clone())),
                                         ];
+                                        
+                                        // Add the 'p' tag with the pubkey of the person being zapped
+                                        tags.push(Tag::public_key(zap_request_event.pubkey));
+                                        
                                         if let Some(preimage) = &preimage_opt {
                                             tags.push(Tag::from_standardized_without_cell(TagStandard::Preimage(preimage.clone())));
                                         }
