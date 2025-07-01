@@ -428,6 +428,10 @@ async fn subscribe_nwc_notifications(pool: Arc<SqlitePool>) {
                                                 return;
                                             }
                                         };
+                                        
+                                        // Log the signed zap receipt event in debug level
+                                        let zap_receipt_json = serde_json::to_string(&zap_receipt_event).unwrap_or_default();
+                                        log::debug!("Signed zap receipt event: {}", zap_receipt_json);
                                         // 5. Publish to relays
                                         let client = Client::new(sdk_keys);
                                         for relay_url in &relays {
