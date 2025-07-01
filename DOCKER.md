@@ -12,10 +12,10 @@ This project automatically builds and publishes Docker images to GitHub Containe
 ### Running the Published Image
 
 ```bash
-# Pull and run the latest image
+# Pull and run the latest image (database will be created in container)
 docker run -p 8080:8080 ghcr.io/[username]/rustress:latest
 
-# Run with environment variables
+# Run with persistent database storage
 docker run -p 8080:8080 \
   -e DATABASE_URL=sqlite:/app/data/rustress.db \
   -e RUST_LOG=info \
@@ -23,11 +23,17 @@ docker run -p 8080:8080 \
   -v $(pwd)/data:/app/data \
   ghcr.io/[username]/rustress:latest
 
-# Run with custom configuration
+# Run with environment file and persistent storage
 docker run -p 8080:8080 \
   --env-file .env \
   -v $(pwd)/data:/app/data \
   ghcr.io/[username]/rustress:latest
+
+# Run locally built image with persistent database
+docker run --name rustress --rm -p 8080:8080 \
+  --env-file .env \
+  -v $(pwd)/data:/app/data \
+  rustress
 ```
 
 ### Building Locally
@@ -45,6 +51,17 @@ docker run -p 8080:8080 rustress
 - `DATABASE_URL` - SQLite database path (default: `sqlite:rustress.db`)
 - `RUST_LOG` - Log level (default: `info`)
 - `BIND_ADDRESS` - Server bind address (default: `0.0.0.0`)
+- `BASE_URL` - Base URL for callbacks (default: `https://example.com`)
+- `DOMAIN` - Domain for lightning addresses (default: `example.com`)
+- `NIP57_PRIVATE_KEY` - Private key for signing zap receipts (optional)
+- `NOSTR_NIP57_PRIVATE_KEY` - Alternative name for NIP57 private key (optional)
+
+### Database Initialization
+
+The application automatically creates the required database schema on startup:
+- Creates `users` and `invoices` tables if they don't exist
+- Sets up necessary indexes for optimal performance
+- No manual database setup required
 
 ### Notes
 
@@ -52,3 +69,4 @@ docker run -p 8080:8080 rustress
 - Images are automatically tagged with branch names and semantic versions
 - Pull requests build images but don't publish them
 - The `latest` tag is only updated on the default branch
+- Database schema is automatically initialized on first startup

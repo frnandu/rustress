@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, SqlitePool};
+use std::str::FromStr;
 
 #[derive(Debug, Serialize, Deserialize, FromRow)]
 pub struct Invoice {
@@ -25,13 +26,84 @@ pub struct User {
 }
 
 pub async fn get_db_pool() -> SqlitePool {
-    SqlitePool::connect("sqlite://rustress.db")
+    let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:rustress.db".to_string());
+    
+    // Extract the file path from the database URL and ensure directory exists
+    if let Some(file_path) = database_url.strip_prefix("sqlite:") {
+        if let Some(parent_dir) = std::path::Path::new(file_path).parent() {
+            if !parent_dir.exists() {
+                std::fs::create_dir_all(parent_dir)
+                    .expect("Failed to create database directory");
+            }
+        }
+    }
+    
+    // Use connect_with to ensure the database file is created if it doesn't exist
+    let options = sqlx::sqlite::SqliteConnectOptions::from_str(&database_url)
+        .expect("Invalid database URL")
+        .create_if_missing(true);
+    
+    SqlitePool::connect_with(options)
         .await
         .expect("Failed to connect to DB")
 }
 
-pub async fn run_migrations(_pool: &SqlitePool) {
-    // Stub: migrations handled externally or on first run
+pub async fn run_migrations(pool: &SqlitePool) {
+    // Create users table
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            encrypted_connection_secret TEXT NOT NULL,
+            username TEXT NOT NULL UNIQUE,
+            nostr_pubkey TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        "#,
+    )
+    .execute(pool)
+    .await
+    .expect("Failed to create users table");
+
+    // Create invoices table
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS invoices (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            amount INTEGER NOT NULL,
+            description TEXT,
+            payment_request TEXT NOT NULL,
+            payment_hash TEXT NOT NULL UNIQUE,
+            preimage TEXT,
+            metadata TEXT,
+            settled_at DATETIME,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+        "#,
+    )
+    .execute(pool)
+    .await
+    .expect("Failed to create invoices table");
+
+    // Create indexes for better performance
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
+        .execute(pool)
+        .await
+        .expect("Failed to create users username index");
+
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_invoices_payment_hash ON invoices(payment_hash)")
+        .execute(pool)
+        .await
+        .expect("Failed to create invoices payment_hash index");
+
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_invoices_user_id ON invoices(user_id)")
+        .execute(pool)
+        .await
+        .expect("Failed to create invoices user_id index");
+
+    log::info!("Database migrations completed successfully");
 }
 
 pub async fn create_user(

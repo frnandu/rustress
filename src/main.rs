@@ -476,6 +476,12 @@ async fn main() -> std::io::Result<()> {
     run_migrations(&pool).await;
     let pool = Arc::new(pool);
 
+    // Start NWC subscription after database is ready
+    let pool_for_nwc = pool.clone();
+    tokio::spawn(async move {
+        subscribe_nwc_notifications(pool_for_nwc).await;
+    });
+
     let base_url = std_env::var("BASE_URL").unwrap_or("https://example.com".to_string());
     let domain = std_env::var("DOMAIN").unwrap_or("example.com".to_string());
 
