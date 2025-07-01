@@ -1,0 +1,21 @@
+[package]
+name = "rustress"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+actix-web = "4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sqlx = { version = "0.7", features = ["sqlite", "runtime-tokio-native-tls"] }
+dotenv = "0.15"
+nostr = { git = "https://github.com/frnandu/nostr", branch = "nwc-notifications" }
+nwc = { git = "https://github.com/frnandu/nostr", branch = "nwc-notifications", package = "nwc" }
+log = "0.4"
+env_logger = "0.10"
+rand = "0.8"
+chrono = { version = "0.4", features = ["serde"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+nostr-relay-pool = { git = "https://github.com/rust-nostr/nostr" }
+nostr-sdk = { git = "https://github.com/rust-nostr/nostr" }
+bech32 = "0.11"
