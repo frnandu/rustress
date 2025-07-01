@@ -496,7 +496,8 @@ async fn main() -> std::io::Result<()> {
         nostr_nip57_public_key,
     });
 
-    info!("Starting server at 127.0.0.1:8080");
+    let bind_address = std_env::var("BIND_ADDRESS").unwrap_or_else(|_| "127.0.0.1".to_string());
+    info!("Starting server at {}:8080", bind_address);
     HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(pool.clone()))
@@ -518,7 +519,7 @@ async fn main() -> std::io::Result<()> {
                 web::get().to(lnurlp_verify),
             )
     })
-    .bind(("127.0.0.1", 8080))?
+    .bind((bind_address.as_str(), 8080))?
     .run()
     .await
 }
