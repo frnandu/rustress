@@ -121,8 +121,8 @@ async fn lnurlp(
         }
     });
     // Add user's nostrPubkey (converted from npub to hex if needed)
-    if let Some(ref nostr_pubkey) = user.nostr_pubkey {
-fixe        // Use the NIP57_PRIVATE_KEY to derive the public key for nostrPubkey
+    if let Some(_) = user.nostr_pubkey {
+        // Use the NIP57_PRIVATE_KEY to derive the public key for nostrPubkey
         if let Ok(sk_str) = std::env::var("NIP57_PRIVATE_KEY") {
             if let Ok(sk) = SdkSecretKey::from_str(&sk_str) {
                 let keys = SdkKeys::new(sk);
