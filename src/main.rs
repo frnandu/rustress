@@ -412,13 +412,37 @@ async fn subscribe_nwc_notifications(pool: Arc<SqlitePool>) {
                                         };
                                         let bolt11 = invoice.payment_request.clone();
                                         let preimage_opt = invoice.preimage.clone();
+                                        // Extract the 'e' tag from the zap request (the event being zapped)
+                                        let zapped_event_id = zap_request
+                                            .get("tags")
+                                            .and_then(|tags| tags.as_array())
+                                            .and_then(|tags| {
+                                                tags.iter().find(|t| {
+                                                    t.get(0) == Some(&serde_json::json!("e"))
+                                                })
+                                            })
+                                            .and_then(|e_tag| e_tag.as_array())
+                                            .and_then(|e_tag| e_tag.get(1))
+                                            .and_then(|id_str| id_str.as_str())
+                                            .and_then(|id_str| nostr::EventId::from_str(id_str).ok());
+                                        
                                         let mut tags = vec![
-                                            Tag::event(zap_request_event.id),
                                             Tag::from_standardized_without_cell(TagStandard::Bolt11(bolt11.clone())),
                                         ];
                                         
+                                        // Add the 'e' tag with the event being zapped
+                                        if let Some(event_id) = zapped_event_id {
+                                            tags.push(Tag::event(event_id));
+                                        }
+                                        
                                         // Add the 'p' tag with the pubkey of the person being zapped
                                         tags.push(Tag::public_key(zap_request_event.pubkey));
+                                        
+                                        // Add the 'P' tag with the pubkey of the zap request sender
+                                        tags.push(Tag::parse(vec!["P".to_string(), zap_request_event.pubkey.to_string()]).unwrap());
+                                        
+                                        // Add the 'description' tag with the JSON-encoded zap request
+                                        tags.push(Tag::parse(vec!["description".to_string(), serde_json::to_string(&zap_request).unwrap()]).unwrap());
                                         
                                         if let Some(preimage) = &preimage_opt {
                                             tags.push(Tag::from_standardized_without_cell(TagStandard::Preimage(preimage.clone())));
