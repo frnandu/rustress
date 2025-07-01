@@ -1,5 +1,6 @@
 use actix_web::web::Query;
-use actix_web::{App, HttpResponse, HttpServer, Responder, web};
+use actix_web::{App, HttpResponse, HttpServer, Responder, web, cookie::Cookie, HttpRequest};
+use actix_files as fs;
 use log::{info, warn};
 use nostr::prelude::*;
 use nostr_sdk::{
@@ -19,15 +20,39 @@ mod db;
 
 use crate::db::{
     create_user, delete_user_by_username, get_all_users_with_secret, get_db_pool,
-    get_invoice_by_payment_hash, get_user_by_username, insert_invoice, mark_invoice_settled,
+    get_invoice_by_payment_hash, get_user_by_username_and_domain, insert_invoice, mark_invoice_settled,
     run_migrations, update_invoice_metadata_with_zap_receipt,
 };
 
 #[derive(Clone)]
 struct AppConfig {
-    base_url: String,
-    domain: String,
-    nostr_nip57_public_key: Option<String>,
+    admin_password: String,
+}
+
+fn generate_admin_password() -> String {
+    use rand::Rng;
+    const CHARSET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let mut rng = rand::thread_rng();
+    (0..12)
+        .map(|_| {
+            let idx = rng.gen_range(0..CHARSET.len());
+            CHARSET[idx] as char
+        })
+        .collect()
+}
+
+// Admin authentication middleware
+fn check_admin_auth(req: &HttpRequest, admin_password: &str) -> bool {
+    if let Some(auth_cookie) = req.cookie("admin_auth") {
+        auth_cookie.value() == admin_password
+    } else {
+        false
+    }
+}
+
+#[derive(Deserialize)]
+struct AdminLoginRequest {
+    password: String,
 }
 
 fn get_lnurl_metadata(username: &str, domain: &str) -> String {
@@ -57,24 +82,37 @@ fn npub_to_hex(npub: &str) -> Option<String> {
 
 async fn lnurlp(
     pool: web::Data<Arc<SqlitePool>>,
-    config: web::Data<Arc<AppConfig>>,
+    req: HttpRequest,
     path: web::Path<String>,
 ) -> impl Responder {
     let username = path.into_inner();
-    let user = match get_user_by_username(&pool, &username).await {
+    
+    // Extract domain from Host header
+    let host = req.headers().get("host")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("localhost:8080");
+    
+    // Remove port from host if present
+    let domain = host.split(':').next().unwrap_or(host);
+    
+    let user = match get_user_by_username_and_domain(&pool, &username, domain).await {
         Ok(u) => u,
         Err(_) => {
             return HttpResponse::NotFound()
                 .json(serde_json::json!({"status": "ERROR", "reason": "User not found"}));
         }
     };
+    
+    let scheme = if req.connection_info().scheme() == "https" { "https" } else { "http" };
+    let base_url = format!("{}://{}", scheme, host);
+    
     let mut resp = serde_json::json!({
         "tag": "payRequest",
         "commentAllowed": 255,
-        "callback": format!("{}/lnurlp/{}/callback", config.base_url, user.username),
+        "callback": format!("{}/lnurlp/{}/callback", base_url, user.username),
         "minSendable": 1000,
         "maxSendable": 10000000000u64,
-        "metadata": get_lnurl_metadata(&user.username, &config.domain),
+        "metadata": get_lnurl_metadata(&user.username, &user.domain),
         "payerData": {
             "name": {"mandatory": false},
             "email": {"mandatory": false},
@@ -82,24 +120,34 @@ async fn lnurlp(
         }
     });
     // Add user's nostrPubkey (converted from npub to hex if needed)
-    if let Some(hex_pubkey) =
-        npub_to_hex(&user.nostr_pubkey).or_else(|| Some(user.nostr_pubkey.clone()))
-    {
-        resp["nostrPubkey"] = serde_json::json!(hex_pubkey);
-        resp["allowsNostr"] = serde_json::json!(true);
+    if let Some(ref nostr_pubkey) = user.nostr_pubkey {
+        if let Some(hex_pubkey) = npub_to_hex(nostr_pubkey).or_else(|| Some(nostr_pubkey.clone())) {
+            resp["nostrPubkey"] = serde_json::json!(hex_pubkey);
+            resp["allowsNostr"] = serde_json::json!(true);
+        }
     }
     HttpResponse::Ok().json(resp)
 }
 
 async fn nip05(
     pool: web::Data<Arc<SqlitePool>>,
+    req: HttpRequest,
     query: web::Query<HashMap<String, String>>,
 ) -> impl Responder {
     let username = match query.get("name") {
         Some(u) => u,
         None => return HttpResponse::Ok().json(serde_json::json!({"names": {}})),
     };
-    match get_user_by_username(&pool, username).await {
+    
+    // Extract domain from Host header
+    let host = req.headers().get("host")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("localhost:8080");
+    
+    // Remove port from host if present
+    let domain = host.split(':').next().unwrap_or(host);
+    
+    match get_user_by_username_and_domain(&pool, username, domain).await {
         Ok(user) => HttpResponse::Ok().json(serde_json::json!({
             "names": { user.username: user.nostr_pubkey }
         })),
@@ -109,65 +157,30 @@ async fn nip05(
 
 #[derive(Deserialize)]
 struct AddUserRequest {
-    connection_secret: String,
+    connection_secret: Option<String>,
     username: Option<String>,
-    nostr_pubkey: String,
+    nostr_pubkey: Option<String>,
+    domain: String,
 }
 
-async fn add_entry(
-    pool: web::Data<Arc<SqlitePool>>,
-    req: web::Json<AddUserRequest>,
-) -> impl Responder {
-    let username = req.username.clone().unwrap_or_else(|| {
-        // fallback: random number as string
-        format!("{}", rand::random::<u64>())
-    });
-
-    let user = match create_user(&pool, &req.connection_secret, &username, &req.nostr_pubkey).await
-    {
-        Ok(u) => u,
-        Err(e) => {
-            return HttpResponse::BadRequest()
-                .json(serde_json::json!({"status": "ERROR", "reason": e.to_string()}));
-        }
-    };
-
-    let lightning_address = format!("{}@example.com", user.username);
-    HttpResponse::Ok().json(serde_json::json!({"lightning_address": lightning_address}))
-}
-
-async fn delete_user(pool: web::Data<Arc<SqlitePool>>, path: web::Path<String>) -> impl Responder {
-    let username = path.into_inner();
-
-    match delete_user_by_username(&pool, &username).await {
-        Ok(deleted) => {
-            if deleted {
-                HttpResponse::Ok().json(serde_json::json!({
-                    "status": "OK",
-                    "message": format!("User '{}' deleted successfully", username)
-                }))
-            } else {
-                HttpResponse::NotFound().json(serde_json::json!({
-                    "status": "ERROR",
-                    "reason": format!("User '{}' not found", username)
-                }))
-            }
-        }
-        Err(e) => HttpResponse::InternalServerError().json(serde_json::json!({
-            "status": "ERROR",
-            "reason": e.to_string()
-        })),
-    }
-}
 
 async fn lnurlp_callback(
     pool: web::Data<Arc<SqlitePool>>,
-    config: web::Data<Arc<AppConfig>>,
+    req: HttpRequest,
     path: web::Path<String>,
     query: Query<HashMap<String, String>>,
 ) -> impl Responder {
     let username = path.into_inner();
-    let user = match get_user_by_username(&pool, &username).await {
+    
+    // Extract domain from Host header
+    let host = req.headers().get("host")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("localhost:8080");
+    
+    // Remove port from host if present
+    let domain = host.split(':').next().unwrap_or(host);
+    
+    let user = match get_user_by_username_and_domain(&pool, &username, domain).await {
         Ok(u) => u,
         Err(_) => {
             return HttpResponse::NotFound()
@@ -193,16 +206,23 @@ async fn lnurlp_callback(
         .and_then(|z| z.get("content").and_then(|c| c.as_str()))
         .unwrap_or(&comment);
 
-    // Fetch the user's NWC connection secret
-    let nwc_secret = user.encrypted_connection_secret.clone();
+    // Check if user has NWC connection secret
+    let nwc_secret = match &user.nwc_uri {
+        Some(secret) => secret,
+        None => {
+            return HttpResponse::BadRequest().json(
+                serde_json::json!({"status": "ERROR", "reason": "User has no payment method configured"}),
+            );
+        }
+    };
+    
     // Parse the NWC URI
-    let uri =
-        match NostrWalletConnectURI::from_str(&nwc_secret) {
-            Ok(u) => u,
-            Err(e) => return HttpResponse::InternalServerError().json(
-                serde_json::json!({"status": "ERROR", "reason": format!("Invalid NWC URI: {}", e)}),
-            ),
-        };
+    let uri = match NostrWalletConnectURI::from_str(nwc_secret) {
+        Ok(u) => u,
+        Err(e) => return HttpResponse::InternalServerError().json(
+            serde_json::json!({"status": "ERROR", "reason": format!("Invalid NWC URI: {}", e)}),
+        ),
+    };
     // Create the NWC client
     let nwc = NWC::new(uri);
     // Create the invoice request
@@ -246,8 +266,16 @@ async fn lnurlp_callback(
                 .json(serde_json::json!({"status": "ERROR", "reason": e.to_string()}));
         }
     };
+    
+    // Use the request host to construct the base URL
+    let host = req.headers().get("host")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("localhost:8080");
+    let scheme = if req.connection_info().scheme() == "https" { "https" } else { "http" };
+    let base_url = format!("{}://{}", scheme, host);
+    
     HttpResponse::Ok().json(serde_json::json!({
-        "verify": format!("{}/lnurlp/{}/verify/{}", config.base_url, user.username, invoice_rec.payment_hash),
+        "verify": format!("{}/lnurlp/{}/verify/{}", base_url, user.username, invoice_rec.payment_hash),
         "routes": [],
         "pr": invoice_rec.payment_request
     }))
@@ -283,7 +311,13 @@ async fn subscribe_nwc_notifications(pool: Arc<SqlitePool>) {
     };
     for user in users {
         let pool = pool.clone();
-        let secret = user.encrypted_connection_secret.clone();
+        let secret = match &user.nwc_uri {
+            Some(s) => s.clone(),
+            None => {
+                warn!("User {} has no NWC connection secret, skipping notifications", user.id);
+                continue;
+            }
+        };
         let user_id = user.id;
         tokio::spawn(async move {
             // Create NWC client
@@ -428,13 +462,21 @@ async fn subscribe_nwc_notifications(pool: Arc<SqlitePool>) {
 
 async fn well_known_lnurlp(
     pool: web::Data<Arc<SqlitePool>>,
-    config: web::Data<Arc<AppConfig>>,
+    req: HttpRequest,
     path: web::Path<String>,
 ) -> impl Responder {
     let username = path.into_inner();
 
+    // Extract domain from Host header
+    let host = req.headers().get("host")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("localhost:8080");
+    
+    // Remove port from host if present
+    let domain = host.split(':').next().unwrap_or(host);
+
     // Check if user exists
-    let user = match get_user_by_username(&pool, &username).await {
+    let user = match get_user_by_username_and_domain(&pool, &username, domain).await {
         Ok(u) => u,
         Err(_) => {
             return HttpResponse::NotFound()
@@ -442,13 +484,16 @@ async fn well_known_lnurlp(
         }
     };
 
+    let scheme = if req.connection_info().scheme() == "https" { "https" } else { "http" };
+    let base_url = format!("{}://{}", scheme, host);
+
     let mut resp = serde_json::json!({
         "tag": "payRequest",
         "commentAllowed": 255,
-        "callback": format!("{}/lnurlp/{}/callback", config.base_url, user.username),
+        "callback": format!("{}/lnurlp/{}/callback", base_url, user.username),
         "minSendable": 1000,
         "maxSendable": 10000000000u64,
-        "metadata": get_lnurl_metadata(&user.username, &config.domain),
+        "metadata": get_lnurl_metadata(&user.username, &user.domain),
         "payerData": {
             "name": {"mandatory": false},
             "email": {"mandatory": false},
@@ -457,14 +502,149 @@ async fn well_known_lnurlp(
     });
 
     // Add user's nostrPubkey (converted from npub to hex if needed)
-    if let Some(hex_pubkey) =
-        npub_to_hex(&user.nostr_pubkey).or_else(|| Some(user.nostr_pubkey.clone()))
-    {
-        resp["nostrPubkey"] = serde_json::json!(hex_pubkey);
-        resp["allowsNostr"] = serde_json::json!(true);
+    if let Some(ref nostr_pubkey) = user.nostr_pubkey {
+        if let Some(hex_pubkey) = npub_to_hex(nostr_pubkey).or_else(|| Some(nostr_pubkey.clone())) {
+            resp["nostrPubkey"] = serde_json::json!(hex_pubkey);
+            resp["allowsNostr"] = serde_json::json!(true);
+        }
     }
 
     HttpResponse::Ok().json(resp)
+}
+
+// Admin authentication endpoints
+async fn admin_login(
+    config: web::Data<Arc<AppConfig>>,
+    req: web::Json<AdminLoginRequest>,
+) -> impl Responder {
+    if req.password == config.admin_password {
+        let cookie = Cookie::build("admin_auth", &config.admin_password)
+            .path("/")
+            .max_age(actix_web::cookie::time::Duration::hours(24))
+            .http_only(true)
+            .finish();
+        
+        HttpResponse::Ok()
+            .cookie(cookie)
+            .json(serde_json::json!({"status": "OK", "message": "Login successful"}))
+    } else {
+        HttpResponse::Unauthorized()
+            .json(serde_json::json!({"status": "ERROR", "reason": "Invalid password"}))
+    }
+}
+
+async fn admin_interface(req: HttpRequest, config: web::Data<Arc<AppConfig>>) -> impl Responder {
+    if !check_admin_auth(&req, &config.admin_password) {
+        return HttpResponse::Unauthorized()
+            .body(include_str!("../static/login.html"));
+    }
+    
+    match fs::NamedFile::open("static/admin.html") {
+        Ok(file) => file.into_response(&req),
+        Err(_) => HttpResponse::InternalServerError().body("Admin interface not found"),
+    }
+}
+
+// Protected admin endpoints
+async fn admin_users(
+    req: HttpRequest,
+    pool: web::Data<Arc<SqlitePool>>,
+    config: web::Data<Arc<AppConfig>>,
+) -> impl Responder {
+    if !check_admin_auth(&req, &config.admin_password) {
+        return HttpResponse::Unauthorized()
+            .json(serde_json::json!({"status": "ERROR", "reason": "Authentication required"}));
+    }
+
+    match get_all_users_with_secret(&pool).await {
+        Ok(users) => {
+            // Don't expose connection secrets in admin interface
+            let safe_users: Vec<serde_json::Value> = users
+                .into_iter()
+                .map(|user| {
+                    serde_json::json!({
+                        "id": user.id,
+                        "username": user.username,
+                        "nostr_pubkey": user.nostr_pubkey,
+                        "domain": user.domain,
+                        "created_at": user.created_at
+                    })
+                })
+                .collect();
+            HttpResponse::Ok().json(safe_users)
+        }
+        Err(e) => HttpResponse::InternalServerError().json(serde_json::json!({
+            "status": "ERROR",
+            "reason": e.to_string()
+        })),
+    }
+}
+
+async fn admin_add_user(
+    req: HttpRequest,
+    pool: web::Data<Arc<SqlitePool>>,
+    config: web::Data<Arc<AppConfig>>,
+    user_req: web::Json<AddUserRequest>,
+) -> impl Responder {
+    if !check_admin_auth(&req, &config.admin_password) {
+        return HttpResponse::Unauthorized()
+            .json(serde_json::json!({"status": "ERROR", "reason": "Authentication required"}));
+    }
+
+    // Validate that at least one of the optional fields is provided and not empty
+    let has_connection_secret = user_req.connection_secret.as_ref().map_or(false, |s| !s.trim().is_empty());
+    let has_nostr_pubkey = user_req.nostr_pubkey.as_ref().map_or(false, |s| !s.trim().is_empty());
+    
+    if !has_connection_secret && !has_nostr_pubkey {
+        return HttpResponse::BadRequest()
+            .json(serde_json::json!({"status": "ERROR", "reason": "At least one of 'connection_secret' (for LNURL) or 'nostr_pubkey' (for NIP-05) must be provided"}));
+    }
+
+    let username = user_req.username.clone().unwrap_or_else(|| {
+        format!("{}", rand::random::<u64>())
+    });
+
+    match create_user(&pool, user_req.connection_secret.as_deref(), &username, user_req.nostr_pubkey.as_deref(), &user_req.domain).await {
+        Ok(user) => {
+            let lightning_address = format!("{}@{}", user.username, user.domain);
+            HttpResponse::Ok().json(serde_json::json!({"lightning_address": lightning_address}))
+        }
+        Err(e) => HttpResponse::BadRequest()
+            .json(serde_json::json!({"status": "ERROR", "reason": e.to_string()})),
+    }
+}
+
+async fn admin_delete_user(
+    req: HttpRequest,
+    pool: web::Data<Arc<SqlitePool>>,
+    config: web::Data<Arc<AppConfig>>,
+    path: web::Path<String>,
+) -> impl Responder {
+    if !check_admin_auth(&req, &config.admin_password) {
+        return HttpResponse::Unauthorized()
+            .json(serde_json::json!({"status": "ERROR", "reason": "Authentication required"}));
+    }
+
+    let username = path.into_inner();
+    match delete_user_by_username(&pool, &username).await {
+        Ok(deleted) => {
+            if deleted {
+                HttpResponse::Ok().json(serde_json::json!({
+                    "status": "OK",
+                    "message": format!("User '{}' deleted successfully", username)
+                }))
+            } else {
+                HttpResponse::NotFound().json(serde_json::json!({
+                    "status": "ERROR",
+                    "reason": format!("User '{}' not found", username)
+                }))
+            }
+        }
+        Err(e) => HttpResponse::InternalServerError().json(serde_json::json!({
+            "status": "ERROR",
+            "reason": e.to_string()
+        })),
+    }
 }
 
 #[actix_web::main]
@@ -482,24 +662,13 @@ async fn main() -> std::io::Result<()> {
         subscribe_nwc_notifications(pool_for_nwc).await;
     });
 
-    let base_url = std_env::var("BASE_URL").unwrap_or("https://example.com".to_string());
-    let domain = std_env::var("DOMAIN").unwrap_or("example.com".to_string());
-
-    // Derive public key from private key (like TypeScript does)
-    let nostr_nip57_public_key =
-        std_env::var("NOSTR_NIP57_PRIVATE_KEY")
-            .ok()
-            .and_then(|private_key| {
-                SdkSecretKey::from_str(&private_key).ok().map(|sk| {
-                    let keys = SdkKeys::new(sk);
-                    keys.public_key().to_string()
-                })
-            });
+    // Generate admin password and print to stdout
+    let admin_password = generate_admin_password();
+    println!("🔐 ADMIN PASSWORD: {}", admin_password);
+    println!("💡 Save this password - it's required to access /admin");
 
     let config = Arc::new(AppConfig {
-        base_url,
-        domain,
-        nostr_nip57_public_key,
+        admin_password,
     });
 
     let bind_address = std_env::var("BIND_ADDRESS").unwrap_or_else(|_| "127.0.0.1".to_string());
@@ -514,8 +683,6 @@ async fn main() -> std::io::Result<()> {
                 web::get().to(well_known_lnurlp),
             )
             .route("/.well-known/nostr.json", web::get().to(nip05))
-            .route("/api/add", web::post().to(add_entry))
-            .route("/api/{username}", web::delete().to(delete_user))
             .route(
                 "/lnurlp/{username}/callback",
                 web::get().to(lnurlp_callback),
@@ -524,6 +691,14 @@ async fn main() -> std::io::Result<()> {
                 "/lnurlp/{username}/verify/{payment_hash}",
                 web::get().to(lnurlp_verify),
             )
+            // Admin routes
+            .route("/admin", web::get().to(admin_interface))
+            .route("/admin/login", web::post().to(admin_login))
+            .route("/admin/users", web::get().to(admin_users))
+            .route("/admin/add", web::post().to(admin_add_user))
+            .route("/admin/{username}", web::delete().to(admin_delete_user))
+            // Serve static files
+            .service(fs::Files::new("/static", "static").show_files_listing())
     })
     .bind((bind_address.as_str(), 8080))?
     .run()

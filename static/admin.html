@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rustress Admin</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        h2 {
+            color: #555;
+            border-bottom: 2px solid #007bff;
+            padding-bottom: 10px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #555;
+        }
+        input[type="text"], textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        textarea {
+            height: 80px;
+            resize: vertical;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-right: 10px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .delete-btn {
+            background-color: #dc3545;
+        }
+        .delete-btn:hover {
+            background-color: #c82333;
+        }
+        .users-list {
+            margin-top: 30px;
+        }
+        .user-row {
+            display: flex;
+            align-items: center;
+            padding: 12px 16px;
+            margin-bottom: 8px;
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        .user-row:hover {
+            background: #e9ecef;
+        }
+        .user-info {
+            flex: 1;
+            display: flex;
+            gap: 20px;
+            align-items: center;
+        }
+        .user-field {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .user-field strong {
+            color: #495057;
+            margin-right: 5px;
+        }
+        .username {
+            min-width: 120px;
+            font-weight: bold;
+            color: #007bff;
+        }
+        .domain {
+            min-width: 140px;
+        }
+        .nostr-key {
+            min-width: 150px;
+            max-width: 200px;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .delete-icon-btn {
+            background: #dc3545;
+            border: none;
+            color: white;
+            width: 32px;
+            height: 32px;
+            border-radius: 4px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            margin: 0;
+            padding: 0;
+        }
+        .delete-icon-btn:hover {
+            background: #c82333;
+        }
+        .success {
+            color: #155724;
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+        }
+        .error {
+            color: #721c24;
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+        }
+        .loading {
+            opacity: 0.6;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>⚡ Rustress Admin Panel</h1>
+        
+        <div id="message"></div>
+        
+        <h2>Add New User</h2>
+        <form id="addUserForm">
+            <div class="form-group">
+                <label for="username">Username:</label>
+                <input type="text" id="username" name="username" required>
+            </div>
+            <div class="form-group">
+                <label for="domain">Domain:</label>
+                <input type="text" id="domain" name="domain" required 
+                       placeholder="example.com">
+            </div>
+            
+            <div class="form-group">
+                <label for="nostr_pubkey">Nostr Public Key (npub or hex) - Optional:</label>
+                <input type="text" id="nostr_pubkey" name="nostr_pubkey" 
+                       placeholder="npub1... or hex format (for NIP-05 only)">
+            </div>
+            
+            <div class="form-group">
+                <label for="connection_secret">NWC Connection String - Optional:</label>
+                <textarea id="connection_secret" name="connection_secret" 
+                          placeholder="nostr+walletconnect://... (for LNURL payments only)"></textarea>
+                <small style="color: #666; font-size: 12px; margin-top: 5px; display: block;">
+                    ⚠️ <strong>Security:</strong> Use read-only NWC connections with <strong>make_invoice</strong> permission only. 
+                    Never use connections with <strong>pay_invoice</strong> permission as they are stored unencrypted.
+                </small>
+            </div>
+            
+            <button type="submit">Add User</button>
+        </form>
+        
+        <div class="users-list">
+            <h2>Current Users</h2>
+            <button onclick="loadUsers()">Refresh Users</button>
+            <div id="usersList"></div>
+        </div>
+    </div>
+
+    <script>
+        // Show message to user
+        function showMessage(message, type = 'success') {
+            const messageDiv = document.getElementById('message');
+            messageDiv.innerHTML = `<div class="${type}">${message}</div>`;
+            setTimeout(() => {
+                messageDiv.innerHTML = '';
+            }, 5000);
+        }
+
+        // Add user form submission
+        document.getElementById('addUserForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const formData = new FormData(e.target);
+            const userData = {
+                username: formData.get('username'),
+                nostr_pubkey: formData.get('nostr_pubkey'),
+                connection_secret: formData.get('connection_secret'),
+                domain: formData.get('domain')
+            };
+            
+            // Client-side validation: at least one of nostr_pubkey or connection_secret must be provided
+            const hasNostrPubkey = userData.nostr_pubkey && userData.nostr_pubkey.trim() !== '';
+            const hasConnectionSecret = userData.connection_secret && userData.connection_secret.trim() !== '';
+            
+            if (!hasNostrPubkey && !hasConnectionSecret) {
+                showMessage('At least one of "Nostr Public Key" (for NIP-05) or "NWC Connection String" (for LNURL) must be provided', 'error');
+                return;
+            }
+            
+            try {
+                document.body.classList.add('loading');
+                const response = await fetch('/admin/add', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(userData)
+                });
+                
+                if (response.status === 401) {
+                    showMessage('Session expired. Please refresh the page to login again.', 'error');
+                    setTimeout(() => window.location.reload(), 2000);
+                    return;
+                }
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    showMessage(`User "${userData.username || 'auto-generated'}" added successfully! Lightning Address: ${result.lightning_address}`);
+                    e.target.reset();
+                    loadUsers();
+                } else {
+                    showMessage(`Error: ${result.reason || 'Failed to add user'}`, 'error');
+                }
+            } catch (error) {
+                showMessage(`Error: ${error.message}`, 'error');
+            } finally {
+                document.body.classList.remove('loading');
+            }
+        });
+
+        // Load and display users
+        async function loadUsers() {
+            try {
+                document.body.classList.add('loading');
+                const response = await fetch('/admin/users');
+                const users = await response.json();
+                
+                const usersList = document.getElementById('usersList');
+                
+                if (users.length === 0) {
+                    usersList.innerHTML = '<p>No users found.</p>';
+                    return;
+                }
+                
+                usersList.innerHTML = users.map(user => `
+                    <div class="user-row">
+                        <div class="user-info">
+                            <div class="user-field username">${user.username}</div>
+                            <div class="user-field domain">${user.username}@${user.domain}</div>
+                            <div class="user-field nostr-key" title="${user.nostr_pubkey || 'None'}">${user.nostr_pubkey ? (user.nostr_pubkey.length > 20 ? user.nostr_pubkey.substring(0, 20) + '...' : user.nostr_pubkey) : 'None'}</div>
+                        </div>
+                        <button class="delete-icon-btn" onclick="deleteUser('${user.username}', '${user.domain}')" title="Delete user">
+                            🗑️
+                        </button>
+                    </div>
+                `).join('');
+            } catch (error) {
+                showMessage(`Error loading users: ${error.message}`, 'error');
+            } finally {
+                document.body.classList.remove('loading');
+            }
+        }
+
+        // Delete user
+        async function deleteUser(username, domain) {
+            if (!confirm(`Are you sure you want to delete user "${username}@${domain}"?`)) {
+                return;
+            }
+            
+            try {
+                document.body.classList.add('loading');
+                const response = await fetch(`/admin/${username}`, {
+                    method: 'DELETE'
+                });
+                
+                if (response.status === 401) {
+                    showMessage('Session expired. Please refresh the page to login again.', 'error');
+                    setTimeout(() => window.location.reload(), 2000);
+                    return;
+                }
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    showMessage(`User "${username}@${domain}" deleted successfully!`);
+                    loadUsers();
+                } else {
+                    showMessage(`Error: ${result.reason || 'Failed to delete user'}`, 'error');
+                }
+            } catch (error) {
+                showMessage(`Error: ${error.message}`, 'error');
+            } finally {
+                document.body.classList.remove('loading');
+            }
+        }
+
+        // Load users on page load
+        window.addEventListener('load', loadUsers);
+    </script>
+</body>
+</html>

@@ -19,16 +19,16 @@ pub struct Invoice {
 #[derive(Debug, Serialize, Deserialize, FromRow)]
 pub struct User {
     pub id: i64,
-    pub encrypted_connection_secret: String,
+    pub nwc_uri: Option<String>,
     pub username: String,
-    pub nostr_pubkey: String,
+    pub nostr_pubkey: Option<String>,
+    pub domain: String,
     pub created_at: String,
 }
 
 pub async fn get_db_pool() -> SqlitePool {
     let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:rustress.db".to_string());
     
-    // Extract the file path from the database URL and ensure directory exists
     if let Some(file_path) = database_url.strip_prefix("sqlite:") {
         if let Some(parent_dir) = std::path::Path::new(file_path).parent() {
             if !parent_dir.exists() {
@@ -38,7 +38,6 @@ pub async fn get_db_pool() -> SqlitePool {
         }
     }
     
-    // Use connect_with to ensure the database file is created if it doesn't exist
     let options = sqlx::sqlite::SqliteConnectOptions::from_str(&database_url)
         .expect("Invalid database URL")
         .create_if_missing(true);
@@ -49,15 +48,16 @@ pub async fn get_db_pool() -> SqlitePool {
 }
 
 pub async fn run_migrations(pool: &SqlitePool) {
-    // Create users table
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            encrypted_connection_secret TEXT NOT NULL,
-            username TEXT NOT NULL UNIQUE,
-            nostr_pubkey TEXT NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            nwc_uri TEXT,
+            username TEXT NOT NULL,
+            nostr_pubkey TEXT,
+            domain TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(username, domain)
         )
         "#,
     )
@@ -65,7 +65,6 @@ pub async fn run_migrations(pool: &SqlitePool) {
     .await
     .expect("Failed to create users table");
 
-    // Create invoices table
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS invoices (
@@ -87,7 +86,6 @@ pub async fn run_migrations(pool: &SqlitePool) {
     .await
     .expect("Failed to create invoices table");
 
-    // Create indexes for better performance
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
         .execute(pool)
         .await
@@ -103,25 +101,27 @@ pub async fn run_migrations(pool: &SqlitePool) {
         .await
         .expect("Failed to create invoices user_id index");
 
-    log::info!("Database migrations completed successfully");
+    log::info!("Database setup completed successfully");
 }
 
 pub async fn create_user(
     pool: &SqlitePool,
-    connection_secret: &str,
+    nwc_uri: Option<&str>,
     username: &str,
-    nostr_pubkey: &str,
+    nostr_pubkey: Option<&str>,
+    domain: &str,
 ) -> Result<User, sqlx::Error> {
     let rec = sqlx::query_as::<_, User>(
         r#"
-        INSERT INTO users (encrypted_connection_secret, username, nostr_pubkey)
-        VALUES (?, ?, ?)
-        RETURNING id, encrypted_connection_secret, username, nostr_pubkey, created_at
+        INSERT INTO users (nwc_uri, username, nostr_pubkey, domain)
+        VALUES (?, ?, ?, ?)
+        RETURNING id, nwc_uri, username, nostr_pubkey, domain, created_at
         "#,
     )
-    .bind(connection_secret)
+    .bind(nwc_uri)
     .bind(username)
     .bind(nostr_pubkey)
+    .bind(domain)
     .fetch_one(pool)
     .await?;
     Ok(rec)
@@ -140,17 +140,18 @@ pub async fn delete_user_by_username(
 
 pub async fn get_all_users_with_secret(pool: &SqlitePool) -> Result<Vec<User>, sqlx::Error> {
     sqlx::query_as::<_, User>(
-        r#"SELECT id, encrypted_connection_secret, username, nostr_pubkey, created_at FROM users"#,
+        r#"SELECT id, nwc_uri, username, nostr_pubkey, domain, created_at FROM users"#,
     )
     .fetch_all(pool)
     .await
 }
 
-pub async fn get_user_by_username(pool: &SqlitePool, username: &str) -> Result<User, sqlx::Error> {
+pub async fn get_user_by_username_and_domain(pool: &SqlitePool, username: &str, domain: &str) -> Result<User, sqlx::Error> {
     sqlx::query_as::<_, User>(
-        r#"SELECT id, encrypted_connection_secret, username, nostr_pubkey, created_at FROM users WHERE username = ?"#,
+        r#"SELECT id, nwc_uri, username, nostr_pubkey, domain, created_at FROM users WHERE username = ? AND domain = ?"#,
     )
     .bind(username)
+    .bind(domain)
     .fetch_one(pool)
     .await
 }
@@ -214,13 +215,11 @@ pub async fn update_invoice_metadata_with_zap_receipt(
     payment_hash: &str,
     zap_receipt_json: &str,
 ) -> Result<(), sqlx::Error> {
-    // Fetch current metadata
     let invoice = get_invoice_by_payment_hash(pool, payment_hash).await?;
     let mut meta_json: serde_json::Value = match invoice.metadata {
         Some(ref s) => serde_json::from_str(s).unwrap_or(serde_json::json!({})),
         None => serde_json::json!({}),
     };
-    // Merge zap_receipt_json
     let zap_json: serde_json::Value =
         serde_json::from_str(zap_receipt_json).unwrap_or(serde_json::json!({}));
     if let Some(obj) = meta_json.as_object_mut() {

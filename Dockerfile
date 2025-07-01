@@ -42,6 +42,9 @@ WORKDIR /app
 # Copy the binary from builder stage
 COPY --from=builder /app/target/release/rustress .
 
+# Copy static files
+COPY static ./static
+
 # Create directory for SQLite database and set permissions
 RUN mkdir -p /app/data && chown -R rustress:rustress /app
 
