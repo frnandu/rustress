@@ -17,22 +17,19 @@ docker run -p 8080:8080 ghcr.io/[username]/rustress:latest
 
 # Run with persistent database storage
 docker run -p 8080:8080 \
-  -e DATABASE_URL=sqlite:/app/data/rustress.db \
+  -e DATABASE_URL=sqlite:rustress.db \
   -e RUST_LOG=info \
   -e BIND_ADDRESS=0.0.0.0 \
-  -v $(pwd)/data:/app/data \
   ghcr.io/[username]/rustress:latest
 
 # Run with environment file and persistent storage
 docker run -p 8080:8080 \
   --env-file .env \
-  -v $(pwd)/data:/app/data \
   ghcr.io/[username]/rustress:latest
 
 # Run locally built image with persistent database
 docker run --name rustress --rm -p 8080:8080 \
   --env-file .env \
-  -v $(pwd)/data:/app/data \
   rustress
 ```
 
