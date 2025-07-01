@@ -432,7 +432,9 @@ async fn subscribe_nwc_notifications(pool: Arc<SqlitePool>) {
                                         
                                         // Add the 'e' tag with the event being zapped
                                         if let Some(event_id) = zapped_event_id {
-                                            tags.push(Tag::event(event_id));
+                                            // Convert from nostr::EventId to nostr_sdk::EventId
+                                            let sdk_event_id = nostr_sdk::EventId::from_hex(&event_id.to_hex()).unwrap();
+                                            tags.push(Tag::event(sdk_event_id));
                                         }
                                         
                                         // Add the 'p' tag with the pubkey of the person being zapped
