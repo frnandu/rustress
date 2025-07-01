@@ -1,6 +1,7 @@
 use actix_web::web::Query;
 use actix_web::{App, HttpResponse, HttpServer, Responder, web, cookie::Cookie, HttpRequest};
 use actix_files as fs;
+use actix_cors::Cors;
 use log::{info, warn};
 use nostr::prelude::*;
 use nostr_sdk::{
@@ -679,6 +680,7 @@ async fn main() -> std::io::Result<()> {
     info!("Starting server at {}:8080", bind_address);
     HttpServer::new(move || {
         App::new()
+            .wrap(Cors::permissive())
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(config.clone()))
             .route("/lnurlp/{username}", web::get().to(lnurlp))
