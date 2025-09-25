@@ -20,7 +20,7 @@ use tokio::time::{Duration, timeout};
 mod db;
 
 use crate::db::{
-    create_user, delete_user_by_username, get_all_users_with_secret, get_db_pool,
+    create_user, delete_user_by_username_and_domain, get_all_users_with_secret, get_db_pool,
     get_invoice_by_payment_hash, get_user_by_username_and_domain, insert_invoice, mark_invoice_settled,
     run_migrations, update_invoice_metadata_with_zap_receipt,
 };
@@ -610,25 +610,25 @@ async fn admin_delete_user(
     req: HttpRequest,
     pool: web::Data<Arc<SqlitePool>>,
     config: web::Data<Arc<AppConfig>>,
-    path: web::Path<String>,
+    path: web::Path<(String, String)>,
 ) -> impl Responder {
     if !check_admin_auth(&req, &config.admin_password) {
         return HttpResponse::Unauthorized()
             .json(serde_json::json!({"status": "ERROR", "reason": "Authentication required"}));
     }
 
-    let username = path.into_inner();
-    match delete_user_by_username(&pool, &username).await {
+    let (username, domain) = path.into_inner();
+    match delete_user_by_username_and_domain(&pool, &username, &domain).await {
         Ok(deleted) => {
             if deleted {
                 HttpResponse::Ok().json(serde_json::json!({
                     "status": "OK",
-                    "message": format!("User '{}' deleted successfully", username)
+                    "message": format!("User '{}'@'{}' deleted successfully", username, domain)
                 }))
             } else {
                 HttpResponse::NotFound().json(serde_json::json!({
                     "status": "ERROR",
-                    "reason": format!("User '{}' not found", username)
+                    "reason": format!("User '{}'@'{}' not found", username, domain)
                 }))
             }
         }
@@ -689,7 +689,7 @@ async fn main() -> std::io::Result<()> {
             .route("/admin/login", web::post().to(admin_login))
             .route("/admin/users", web::get().to(admin_users))
             .route("/admin/add", web::post().to(admin_add_user))
-            .route("/admin/{username}", web::delete().to(admin_delete_user))
+            .route("/admin/{username}/{domain}", web::delete().to(admin_delete_user))
             // Serve static files
             .service(fs::Files::new("/static", "static").show_files_listing())
     })

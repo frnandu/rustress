@@ -1612,7 +1612,7 @@ dependencies = [
 [[package]]
 name = "nostr"
 version = "0.42.1"
-source = "git+https://github.com/frnandu/nostr?branch=nwc-notifications#d20f9695adcc308620b97ce3fa8f6203f1c0bc37"
+source = "git+https://github.com/rust-nostr/nostr?rev=684c69528c3453b4515c0fadf56d72e25286fbf6#684c69528c3453b4515c0fadf56d72e25286fbf6"
 dependencies = [
  "aes",
  "base64 0.22.1",
@@ -1657,10 +1657,10 @@ dependencies = [
 [[package]]
 name = "nostr-database"
 version = "0.42.0"
-source = "git+https://github.com/frnandu/nostr?branch=nwc-notifications#d20f9695adcc308620b97ce3fa8f6203f1c0bc37"
+source = "git+https://github.com/rust-nostr/nostr?rev=684c69528c3453b4515c0fadf56d72e25286fbf6#684c69528c3453b4515c0fadf56d72e25286fbf6"
 dependencies = [
  "lru",
- "nostr 0.42.1 (git+https://github.com/frnandu/nostr?branch=nwc-notifications)",
+ "nostr 0.42.1 (git+https://github.com/rust-nostr/nostr?rev=684c69528c3453b4515c0fadf56d72e25286fbf6)",
  "tokio",
 ]
 
@@ -1677,15 +1677,15 @@ dependencies = [
 [[package]]
 name = "nostr-relay-pool"
 version = "0.42.0"
-source = "git+https://github.com/frnandu/nostr?branch=nwc-notifications#d20f9695adcc308620b97ce3fa8f6203f1c0bc37"
+source = "git+https://github.com/rust-nostr/nostr?rev=684c69528c3453b4515c0fadf56d72e25286fbf6#684c69528c3453b4515c0fadf56d72e25286fbf6"
 dependencies = [
  "async-utility",
  "async-wsocket",
  "atomic-destructor",
  "lru",
  "negentropy",
- "nostr 0.42.1 (git+https://github.com/frnandu/nostr?branch=nwc-notifications)",
- "nostr-database 0.42.0 (git+https://github.com/frnandu/nostr?branch=nwc-notifications)",
+ "nostr 0.42.1 (git+https://github.com/rust-nostr/nostr?rev=684c69528c3453b4515c0fadf56d72e25286fbf6)",
+ "nostr-database 0.42.0 (git+https://github.com/rust-nostr/nostr?rev=684c69528c3453b4515c0fadf56d72e25286fbf6)",
  "tokio",
  "tracing",
 ]
@@ -1774,11 +1774,11 @@ dependencies = [
 [[package]]
 name = "nwc"
 version = "0.42.0"
-source = "git+https://github.com/frnandu/nostr?branch=nwc-notifications#d20f9695adcc308620b97ce3fa8f6203f1c0bc37"
+source = "git+https://github.com/rust-nostr/nostr?rev=684c69528c3453b4515c0fadf56d72e25286fbf6#684c69528c3453b4515c0fadf56d72e25286fbf6"
 dependencies = [
  "async-utility",
- "nostr 0.42.1 (git+https://github.com/frnandu/nostr?branch=nwc-notifications)",
- "nostr-relay-pool 0.42.0 (git+https://github.com/frnandu/nostr?branch=nwc-notifications)",
+ "nostr 0.42.1 (git+https://github.com/rust-nostr/nostr?rev=684c69528c3453b4515c0fadf56d72e25286fbf6)",
+ "nostr-relay-pool 0.42.0 (git+https://github.com/rust-nostr/nostr?rev=684c69528c3453b4515c0fadf56d72e25286fbf6)",
  "tracing",
 ]
 
@@ -2221,7 +2221,7 @@ dependencies = [
  "dotenv",
  "env_logger",
  "log",
- "nostr 0.42.1 (git+https://github.com/frnandu/nostr?branch=nwc-notifications)",
+ "nostr 0.42.1 (git+https://github.com/rust-nostr/nostr?rev=684c69528c3453b4515c0fadf56d72e25286fbf6)",
  "nostr-relay-pool 0.42.0 (git+https://github.com/rust-nostr/nostr)",
  "nostr-sdk",
  "nwc",

@@ -127,12 +127,14 @@ pub async fn create_user(
     Ok(rec)
 }
 
-pub async fn delete_user_by_username(
+pub async fn delete_user_by_username_and_domain(
     pool: &SqlitePool,
     username: &str,
+    domain: &str,
 ) -> Result<bool, sqlx::Error> {
-    let result = sqlx::query(r#"DELETE FROM users WHERE username = ?"#)
+    let result = sqlx::query(r#"DELETE FROM users WHERE username = ? AND domain = ?"#)
         .bind(username)
+        .bind(domain)
         .execute(pool)
         .await?;
     Ok(result.rows_affected() > 0)
