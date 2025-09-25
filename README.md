@@ -1,6 +1,6 @@
 # rustress
 
-A minimal Lightning/Nostr server in Rust using SQLite.
+A minimal LNurl/Nostr/Zap-receipt server in Rust using SQLite.
 
 ## Features
 - LNURL-pay endpoint with NWC (Nostr Wallet Connect) integration

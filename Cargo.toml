@@ -11,8 +11,8 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sqlx = { version = "0.7", features = ["sqlite", "runtime-tokio-native-tls"] }
 dotenv = "0.15"
-nostr = { git = "https://github.com/frnandu/nostr", branch = "nwc-notifications" }
-nwc = { git = "https://github.com/frnandu/nostr", branch = "nwc-notifications", package = "nwc" }
+nostr = { git = "https://github.com/rust-nostr/nostr", rev = "684c69528c3453b4515c0fadf56d72e25286fbf6" }
+nwc = { git = "https://github.com/rust-nostr/nostr", rev = "684c69528c3453b4515c0fadf56d72e25286fbf6", package = "nwc" }
 log = "0.4"
 env_logger = "0.10"
 rand = "0.8"
