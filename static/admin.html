@@ -28,6 +28,10 @@
             border-bottom: 2px solid #007bff;
             padding-bottom: 10px;
         }
+        h3 {
+            color: #666;
+            margin-top: 20px;
+        }
         .form-group {
             margin-bottom: 15px;
         }
@@ -37,7 +41,7 @@
             font-weight: bold;
             color: #555;
         }
-        input[type="text"], textarea {
+        input[type="text"], input[type="number"], textarea {
             width: 100%;
             padding: 10px;
             border: 1px solid #ddd;
@@ -67,6 +71,12 @@
         .delete-btn:hover {
             background-color: #c82333;
         }
+        .edit-btn {
+            background-color: #28a745;
+        }
+        .edit-btn:hover {
+            background-color: #218838;
+        }
         .users-list {
             margin-top: 30px;
         }
@@ -83,11 +93,15 @@
         .user-row:hover {
             background: #e9ecef;
         }
+        .user-row.prism {
+            border-left: 4px solid #ffc107;
+        }
         .user-info {
             flex: 1;
             display: flex;
             gap: 20px;
             align-items: center;
+            flex-wrap: wrap;
         }
         .user-field {
             white-space: nowrap;
@@ -112,8 +126,23 @@
             font-family: monospace;
             font-size: 12px;
         }
-        .delete-icon-btn {
-            background: #dc3545;
+        .prism-badge {
+            background: #ffc107;
+            color: #000;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: bold;
+        }
+        .prism-splits-info {
+            width: 100%;
+            margin-top: 8px;
+            padding: 8px;
+            background: #fff3cd;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        .delete-icon-btn, .edit-icon-btn {
             border: none;
             color: white;
             width: 32px;
@@ -124,11 +153,20 @@
             align-items: center;
             justify-content: center;
             font-size: 14px;
-            margin: 0;
+            margin: 0 4px;
             padding: 0;
+        }
+        .delete-icon-btn {
+            background: #dc3545;
         }
         .delete-icon-btn:hover {
             background: #c82333;
+        }
+        .edit-icon-btn {
+            background: #28a745;
+        }
+        .edit-icon-btn:hover {
+            background: #218838;
         }
         .success {
             color: #155724;
@@ -150,6 +188,66 @@
             opacity: 0.6;
             pointer-events: none;
         }
+        .prism-split-row {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+            align-items: center;
+        }
+        .prism-split-row input {
+            flex: 1;
+        }
+        .prism-split-row input[type="number"] {
+            width: 100px;
+        }
+        .prism-split-row button {
+            background: #dc3545;
+            padding: 5px 10px;
+            margin: 0;
+        }
+        #prismSplitsContainer {
+            border: 1px solid #ddd;
+            padding: 15px;
+            border-radius: 4px;
+            background: #f8f9fa;
+            margin-top: 15px;
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.4);
+        }
+        .modal-content {
+            background-color: #fefefe;
+            margin: 5% auto;
+            padding: 20px;
+            border: 1px solid #888;
+            border-radius: 8px;
+            width: 80%;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .close {
+            color: #aaa;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        .close:hover {
+            color: #000;
+        }
     </style>
 </head>
 <body>
@@ -158,8 +256,22 @@
         
         <div id="message"></div>
         
-        <h2>Add New User</h2>
-        <form id="addUserForm">
+        <div class="users-list">
+            <h2>Users</h2>
+            <button onclick="openAddUserModal()">Add New User</button>
+            <button onclick="loadUsers()">Refresh Users</button>
+            <div id="usersList"></div>
+        </div>
+    </div>
+
+    <!-- Add User Modal -->
+    <div id="addUserModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Add New User</h2>
+                <span class="close" onclick="closeAddUserModal()">&times;</span>
+            </div>
+            <form id="addUserForm">
             <div class="form-group">
                 <label for="username">Username:</label>
                 <input type="text" id="username" name="username" required>
@@ -179,24 +291,170 @@
             <div class="form-group">
                 <label for="connection_secret">NWC Connection String - Optional:</label>
                 <textarea id="connection_secret" name="connection_secret" 
-                          placeholder="nostr+walletconnect://... (for LNURL payments only)"></textarea>
+                          placeholder="nostr+walletconnect://... (for LNURL payments)"></textarea>
                 <small style="color: #666; font-size: 12px; margin-top: 5px; display: block;">
-                    ⚠️ <strong>Security:</strong> Use read-only NWC connections with <strong>make_invoice</strong> permission only. 
-                    Never use connections with <strong>pay_invoice</strong> permission as they are stored unencrypted.
+                    ⚠️ <strong>Security:</strong> Use read-only NWC with <strong>make_invoice</strong> permission only for regular users. 
+                    For prisms, use NWC with <strong>pay_invoice</strong> permission.
                 </small>
             </div>
             
-            <button type="submit">Add User</button>
-        </form>
-        
-        <div class="users-list">
-            <h2>Current Users</h2>
-            <button onclick="loadUsers()">Refresh Users</button>
-            <div id="usersList"></div>
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" id="is_prism" name="is_prism" onchange="togglePrismFields()">
+                    <strong>Enable Prism (Payment Splitting)</strong>
+                </label>
+                <small style="color: #666; font-size: 12px; margin-top: 5px; display: block;">
+                    When enabled, received payments will be automatically split to multiple lightning addresses.
+                </small>
+            </div>
+            
+            <div id="prismSplitsContainer" style="display: none;">
+                <h3>Prism Splits</h3>
+                <div id="prismSplitsList"></div>
+                <button type="button" onclick="addPrismSplit()">Add Split</button>
+                <small style="color: #666; font-size: 12px; margin-top: 10px; display: block;">
+                    💡 Percentages don't need to total 100%. Remaining funds stay in the prism wallet.
+                </small>
+            </div>
+            
+                <div style="margin-top: 20px;">
+                    <button type="submit">Add User</button>
+                    <button type="button" onclick="closeAddUserModal()">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Edit Prism Modal -->
+    <div id="editPrismModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Edit Prism Configuration</h2>
+                <span class="close" onclick="closeEditModal()">&times;</span>
+            </div>
+            <form id="editPrismForm">
+                <input type="hidden" id="edit_username" name="username">
+                <input type="hidden" id="edit_domain" name="domain">
+                
+                <div class="form-group">
+                    <label for="edit_nwc_uri">NWC Connection String:</label>
+                    <textarea id="edit_nwc_uri" name="nwc_uri"
+                              placeholder="nostr+walletconnect://... (leave empty to keep current)"></textarea>
+                </div>
+                
+                <div class="form-group">
+                    <label for="edit_nostr_pubkey">Nostr Public Key (npub or hex):</label>
+                    <input type="text" id="edit_nostr_pubkey" name="nostr_pubkey"
+                           placeholder="npub1... or hex (leave empty to keep current)">
+                </div>
+                
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="edit_is_prism" name="is_prism" onchange="toggleEditPrismFields()">
+                        <strong>Enable Prism (Payment Splitting)</strong>
+                    </label>
+                </div>
+                
+                <div id="editPrismSplitsContainer" style="display: none;">
+                    <h3>Prism Splits</h3>
+                    <div id="editPrismSplitsList"></div>
+                    <button type="button" onclick="addEditPrismSplit()">Add Split</button>
+                    <small style="color: #666; font-size: 12px; margin-top: 10px; display: block;">
+                        💡 Percentages don't need to total 100%. Remaining funds stay in the prism wallet.
+                    </small>
+                </div>
+                
+                <div style="margin-top: 20px;">
+                    <button type="submit" class="edit-btn">Save Changes</button>
+                    <button type="button" onclick="closeEditModal()">Cancel</button>
+                </div>
+            </form>
         </div>
     </div>
 
     <script>
+        let prismSplitCount = 0;
+        let editPrismSplitCount = 0;
+
+        function togglePrismFields() {
+            const isPrism = document.getElementById('is_prism').checked;
+            document.getElementById('prismSplitsContainer').style.display = isPrism ? 'block' : 'none';
+            if (isPrism && prismSplitCount === 0) {
+                addPrismSplit();
+            }
+        }
+
+        function toggleEditPrismFields() {
+            const isPrism = document.getElementById('edit_is_prism').checked;
+            document.getElementById('editPrismSplitsContainer').style.display = isPrism ? 'block' : 'none';
+        }
+
+        function addPrismSplit() {
+            const container = document.getElementById('prismSplitsList');
+            const id = prismSplitCount++;
+            const div = document.createElement('div');
+            div.className = 'prism-split-row';
+            div.id = `prism-split-${id}`;
+            div.innerHTML = `
+                <input type="text" placeholder="user@domain.com" name="split_address_${id}" required>
+                <input type="number" placeholder="%" min="0.01" max="100" step="0.01" name="split_percentage_${id}" required>
+                <button type="button" onclick="removePrismSplit(${id})">Remove</button>
+            `;
+            container.appendChild(div);
+        }
+
+        function removePrismSplit(id) {
+            document.getElementById(`prism-split-${id}`).remove();
+        }
+
+        function addEditPrismSplit() {
+            const container = document.getElementById('editPrismSplitsList');
+            const id = editPrismSplitCount++;
+            const div = document.createElement('div');
+            div.className = 'prism-split-row';
+            div.id = `edit-prism-split-${id}`;
+            div.innerHTML = `
+                <input type="text" placeholder="user@domain.com" name="split_address_${id}" required>
+                <input type="number" placeholder="%" min="0.01" max="100" step="0.01" name="split_percentage_${id}" required>
+                <button type="button" onclick="removeEditPrismSplit(${id})">Remove</button>
+            `;
+            container.appendChild(div);
+        }
+
+        function removeEditPrismSplit(id) {
+            document.getElementById(`edit-prism-split-${id}`).remove();
+        }
+
+        function collectPrismSplits(formData) {
+            const splits = [];
+            for (let i = 0; i < prismSplitCount; i++) {
+                const address = formData.get(`split_address_${i}`);
+                const percentage = formData.get(`split_percentage_${i}`);
+                if (address && percentage) {
+                    splits.push({
+                        lightning_address: address,
+                        percentage: parseFloat(percentage)
+                    });
+                }
+            }
+            return splits;
+        }
+
+        function collectEditPrismSplits(formData) {
+            const splits = [];
+            for (let i = 0; i < editPrismSplitCount; i++) {
+                const address = formData.get(`split_address_${i}`);
+                const percentage = formData.get(`split_percentage_${i}`);
+                if (address && percentage) {
+                    splits.push({
+                        lightning_address: address,
+                        percentage: parseFloat(percentage)
+                    });
+                }
+            }
+            return splits;
+        }
+
         // Show message to user
         function showMessage(message, type = 'success') {
             const messageDiv = document.getElementById('message');
@@ -206,17 +464,41 @@
             }, 5000);
         }
 
+        // Add user modal functions
+        function openAddUserModal() {
+            document.getElementById('addUserModal').style.display = 'block';
+        }
+
+        function closeAddUserModal() {
+            document.getElementById('addUserModal').style.display = 'none';
+            document.getElementById('addUserForm').reset();
+            prismSplitCount = 0;
+            document.getElementById('prismSplitsList').innerHTML = '';
+            document.getElementById('prismSplitsContainer').style.display = 'none';
+        }
+
         // Add user form submission
         document.getElementById('addUserForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             
             const formData = new FormData(e.target);
+            const isPrism = document.getElementById('is_prism').checked;
+            
             const userData = {
                 username: formData.get('username'),
                 nostr_pubkey: formData.get('nostr_pubkey'),
                 connection_secret: formData.get('connection_secret'),
-                domain: formData.get('domain')
+                domain: formData.get('domain'),
+                is_prism: isPrism
             };
+            
+            if (isPrism) {
+                userData.prism_splits = collectPrismSplits(formData);
+                if (userData.prism_splits.length === 0) {
+                    showMessage('Prism requires at least one split', 'error');
+                    return;
+                }
+            }
             
             // Client-side validation: at least one of nostr_pubkey or connection_secret must be provided
             const hasNostrPubkey = userData.nostr_pubkey && userData.nostr_pubkey.trim() !== '';
@@ -246,8 +528,8 @@
                 const result = await response.json();
                 
                 if (response.ok) {
-                    showMessage(`User "${userData.username || 'auto-generated'}" added successfully! Lightning Address: ${result.lightning_address}`);
-                    e.target.reset();
+                    showMessage(`User "${userData.username || 'auto-generated'}" added successfully! Lightning Address: ${result.lightning_address}${result.is_prism ? ' (PRISM)' : ''}`);
+                    closeAddUserModal();
                     loadUsers();
                 } else {
                     showMessage(`Error: ${result.reason || 'Failed to add user'}`, 'error');
@@ -273,18 +555,33 @@
                     return;
                 }
                 
-                usersList.innerHTML = users.map(user => `
-                    <div class="user-row">
-                        <div class="user-info">
-                            <div class="user-field username">${user.username}</div>
-                            <div class="user-field domain">${user.username}@${user.domain}</div>
-                            <div class="user-field nostr-key" title="${user.nostr_pubkey || 'None'}">${user.nostr_pubkey ? (user.nostr_pubkey.length > 20 ? user.nostr_pubkey.substring(0, 20) + '...' : user.nostr_pubkey) : 'None'}</div>
+                usersList.innerHTML = users.map(user => {
+                    let splitsInfo = '';
+                    if (user.is_prism && user.prism_splits) {
+                        const splitsText = user.prism_splits.map(s => 
+                            `${s.lightning_address} (${s.percentage}%)`
+                        ).join(', ');
+                        splitsInfo = `<div class="prism-splits-info">📊 Splits: ${splitsText}</div>`;
+                    }
+                    
+                    return `
+                        <div class="user-row ${user.is_prism ? 'prism' : ''}">
+                            <div class="user-info">
+                                <div class="user-field username">${user.username}</div>
+                                <div class="user-field domain">${user.username}@${user.domain}</div>
+                                <div class="user-field nostr-key" title="${user.nostr_pubkey || 'None'}">${user.nostr_pubkey ? (user.nostr_pubkey.length > 20 ? user.nostr_pubkey.substring(0, 20) + '...' : user.nostr_pubkey) : 'None'}</div>
+                                ${user.is_prism ? '<span class="prism-badge">PRISM</span>' : ''}
+                                ${splitsInfo}
+                            </div>
+                            <button class="edit-icon-btn" onclick="openEditModal('${user.username}', '${user.domain}', ${user.is_prism}, ${JSON.stringify(user.prism_splits || []).replace(/"/g, '&quot;')})" title="Edit prism">
+                                ✏️
+                            </button>
+                            <button class="delete-icon-btn" onclick="deleteUser('${user.username}', '${user.domain}')" title="Delete user">
+                                🗑️
+                            </button>
                         </div>
-                        <button class="delete-icon-btn" onclick="deleteUser('${user.username}', '${user.domain}')" title="Delete user">
-                            🗑️
-                        </button>
-                    </div>
-                `).join('');
+                    `;
+                }).join('');
             } catch (error) {
                 showMessage(`Error loading users: ${error.message}`, 'error');
             } finally {
@@ -322,6 +619,115 @@
                 showMessage(`Error: ${error.message}`, 'error');
             } finally {
                 document.body.classList.remove('loading');
+            }
+        }
+
+        // Edit prism modal
+        function openEditModal(username, domain, isPrism, splits) {
+            document.getElementById('edit_username').value = username;
+            document.getElementById('edit_domain').value = domain;
+            document.getElementById('edit_is_prism').checked = isPrism;
+            
+            // Clear and populate splits
+            editPrismSplitCount = 0;
+            const container = document.getElementById('editPrismSplitsList');
+            container.innerHTML = '';
+            
+            if (isPrism && splits && splits.length > 0) {
+                splits.forEach(split => {
+                    const id = editPrismSplitCount++;
+                    const div = document.createElement('div');
+                    div.className = 'prism-split-row';
+                    div.id = `edit-prism-split-${id}`;
+                    div.innerHTML = `
+                        <input type="text" placeholder="user@domain.com" name="split_address_${id}" value="${split.lightning_address}" required>
+                        <input type="number" placeholder="%" min="0.01" max="100" step="0.01" name="split_percentage_${id}" value="${split.percentage}" required>
+                        <button type="button" onclick="removeEditPrismSplit(${id})">Remove</button>
+                    `;
+                    container.appendChild(div);
+                });
+            }
+            
+            toggleEditPrismFields();
+            document.getElementById('editPrismModal').style.display = 'block';
+        }
+
+        function closeEditModal() {
+            document.getElementById('editPrismModal').style.display = 'none';
+        }
+
+        // Edit prism form submission
+        document.getElementById('editPrismForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const formData = new FormData(e.target);
+            const username = formData.get('username');
+            const domain = formData.get('domain');
+            const isPrism = document.getElementById('edit_is_prism').checked;
+            
+            const userData = {
+                is_prism: isPrism
+            };
+            
+            // Include NWC URI and nostr_pubkey if provided
+            const nwcUri = formData.get('nwc_uri');
+            const nostrPubkey = formData.get('nostr_pubkey');
+            if (nwcUri && nwcUri.trim()) {
+                userData.nwc_uri = nwcUri.trim();
+            }
+            if (nostrPubkey && nostrPubkey.trim()) {
+                userData.nostr_pubkey = nostrPubkey.trim();
+            }
+            
+            if (isPrism) {
+                userData.prism_splits = collectEditPrismSplits(formData);
+                if (userData.prism_splits.length === 0) {
+                    showMessage('Prism requires at least one split', 'error');
+                    return;
+                }
+            }
+            
+            try {
+                document.body.classList.add('loading');
+                const response = await fetch(`/admin/${username}/${domain}/prism`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(userData)
+                });
+                
+                if (response.status === 401) {
+                    showMessage('Session expired. Please refresh the page to login again.', 'error');
+                    setTimeout(() => window.location.reload(), 2000);
+                    return;
+                }
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    showMessage(`Prism configuration updated for "${username}@${domain}"!`);
+                    closeEditModal();
+                    loadUsers();
+                } else {
+                    showMessage(`Error: ${result.reason || 'Failed to update prism'}`, 'error');
+                }
+            } catch (error) {
+                showMessage(`Error: ${error.message}`, 'error');
+            } finally {
+                document.body.classList.remove('loading');
+            }
+        });
+
+        // Close modal when clicking outside
+        window.onclick = function(event) {
+            const editModal = document.getElementById('editPrismModal');
+            const addModal = document.getElementById('addUserModal');
+            if (event.target == editModal) {
+                closeEditModal();
+            }
+            if (event.target == addModal) {
+                closeAddUserModal();
             }
         }
 
