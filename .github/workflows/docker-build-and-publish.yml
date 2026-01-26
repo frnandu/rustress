@@ -60,7 +60,6 @@ jobs:
         push: true
 #        tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
-        build-args: |
-          TAG=${{ env.TAG }}
+        tags: ${{ env.TAG }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
