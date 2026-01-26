@@ -21,3 +21,4 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 nostr-relay-pool = { git = "https://github.com/rust-nostr/nostr" }
 nostr-sdk = { git = "https://github.com/rust-nostr/nostr" }
 bech32 = "0.11"
+reqwest = { version = "0.11", features = ["json"] }

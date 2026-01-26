@@ -23,6 +23,16 @@ pub struct User {
     pub username: String,
     pub nostr_pubkey: Option<String>,
     pub domain: String,
+    pub is_prism: bool,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, FromRow, Clone)]
+pub struct PrismSplit {
+    pub id: i64,
+    pub user_id: i64,
+    pub lightning_address: String,
+    pub percentage: f64,
     pub created_at: String,
 }
 
@@ -56,6 +66,7 @@ pub async fn run_migrations(pool: &SqlitePool) {
             username TEXT NOT NULL,
             nostr_pubkey TEXT,
             domain TEXT NOT NULL,
+            is_prism BOOLEAN NOT NULL DEFAULT 0,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(username, domain)
         )
@@ -64,6 +75,11 @@ pub async fn run_migrations(pool: &SqlitePool) {
     .execute(pool)
     .await
     .expect("Failed to create users table");
+
+    // Add is_prism column to existing users table if it doesn't exist
+    let _ = sqlx::query("ALTER TABLE users ADD COLUMN is_prism BOOLEAN NOT NULL DEFAULT 0")
+        .execute(pool)
+        .await;
 
     sqlx::query(
         r#"
@@ -86,6 +102,22 @@ pub async fn run_migrations(pool: &SqlitePool) {
     .await
     .expect("Failed to create invoices table");
 
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS prism_splits (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            lightning_address TEXT NOT NULL,
+            percentage REAL NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+        )
+        "#,
+    )
+    .execute(pool)
+    .await
+    .expect("Failed to create prism_splits table");
+
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
         .execute(pool)
         .await
@@ -101,6 +133,11 @@ pub async fn run_migrations(pool: &SqlitePool) {
         .await
         .expect("Failed to create invoices user_id index");
 
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_prism_splits_user_id ON prism_splits(user_id)")
+        .execute(pool)
+        .await
+        .expect("Failed to create prism_splits user_id index");
+
     log::info!("Database setup completed successfully");
 }
 
@@ -110,18 +147,20 @@ pub async fn create_user(
     username: &str,
     nostr_pubkey: Option<&str>,
     domain: &str,
+    is_prism: bool,
 ) -> Result<User, sqlx::Error> {
     let rec = sqlx::query_as::<_, User>(
         r#"
-        INSERT INTO users (nwc_uri, username, nostr_pubkey, domain)
-        VALUES (?, ?, ?, ?)
-        RETURNING id, nwc_uri, username, nostr_pubkey, domain, created_at
+        INSERT INTO users (nwc_uri, username, nostr_pubkey, domain, is_prism)
+        VALUES (?, ?, ?, ?, ?)
+        RETURNING id, nwc_uri, username, nostr_pubkey, domain, is_prism, created_at
         "#,
     )
     .bind(nwc_uri)
     .bind(username)
     .bind(nostr_pubkey)
     .bind(domain)
+    .bind(is_prism)
     .fetch_one(pool)
     .await?;
     Ok(rec)
@@ -142,7 +181,7 @@ pub async fn delete_user_by_username_and_domain(
 
 pub async fn get_all_users_with_secret(pool: &SqlitePool) -> Result<Vec<User>, sqlx::Error> {
     sqlx::query_as::<_, User>(
-        r#"SELECT id, nwc_uri, username, nostr_pubkey, domain, created_at FROM users"#,
+        r#"SELECT id, nwc_uri, username, nostr_pubkey, domain, is_prism, created_at FROM users"#,
     )
     .fetch_all(pool)
     .await
@@ -150,12 +189,79 @@ pub async fn get_all_users_with_secret(pool: &SqlitePool) -> Result<Vec<User>, s
 
 pub async fn get_user_by_username_and_domain(pool: &SqlitePool, username: &str, domain: &str) -> Result<User, sqlx::Error> {
     sqlx::query_as::<_, User>(
-        r#"SELECT id, nwc_uri, username, nostr_pubkey, domain, created_at FROM users WHERE username = ? AND domain = ?"#,
+        r#"SELECT id, nwc_uri, username, nostr_pubkey, domain, is_prism, created_at FROM users WHERE username = ? AND domain = ?"#,
     )
     .bind(username)
     .bind(domain)
     .fetch_one(pool)
     .await
+}
+
+// Prism-related functions
+pub async fn add_prism_split(
+    pool: &SqlitePool,
+    user_id: i64,
+    lightning_address: &str,
+    percentage: f64,
+) -> Result<PrismSplit, sqlx::Error> {
+    let rec = sqlx::query_as::<_, PrismSplit>(
+        r#"
+        INSERT INTO prism_splits (user_id, lightning_address, percentage)
+        VALUES (?, ?, ?)
+        RETURNING id, user_id, lightning_address, percentage, created_at
+        "#,
+    )
+    .bind(user_id)
+    .bind(lightning_address)
+    .bind(percentage)
+    .fetch_one(pool)
+    .await?;
+    Ok(rec)
+}
+
+pub async fn get_prism_splits_by_user_id(pool: &SqlitePool, user_id: i64) -> Result<Vec<PrismSplit>, sqlx::Error> {
+    sqlx::query_as::<_, PrismSplit>(
+        r#"SELECT id, user_id, lightning_address, percentage, created_at FROM prism_splits WHERE user_id = ?"#,
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+}
+
+pub async fn delete_prism_splits_by_user_id(pool: &SqlitePool, user_id: i64) -> Result<(), sqlx::Error> {
+    sqlx::query(r#"DELETE FROM prism_splits WHERE user_id = ?"#)
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn update_user_prism_status(
+    pool: &SqlitePool,
+    user_id: i64,
+    is_prism: bool,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(r#"UPDATE users SET is_prism = ? WHERE id = ?"#)
+        .bind(is_prism)
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn update_user_details(
+    pool: &SqlitePool,
+    user_id: i64,
+    nwc_uri: Option<&str>,
+    nostr_pubkey: Option<&str>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(r#"UPDATE users SET nwc_uri = ?, nostr_pubkey = ? WHERE id = ?"#)
+        .bind(nwc_uri)
+        .bind(nostr_pubkey)
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 pub async fn insert_invoice(
