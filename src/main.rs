@@ -508,6 +508,7 @@ async fn subscribe_nwc_notifications(pool: Arc<SqlitePool>) {
                                     let user_id_clone = user_id;
                                     let pool_clone = pool.clone();
                                     let nwc_secret_clone = nwc_secret.as_ref().clone();
+                                    let is_prism_clone = is_prism;
                                     tokio::spawn(async move {
                                         if let Err(e) = mark_invoice_settled(&pool_clone, &payment_hash, &preimage).await {
                                             warn!("Failed to mark invoice settled for user {}: {}", user_id_clone, e);
@@ -994,10 +995,18 @@ async fn main() -> std::io::Result<()> {
         subscribe_nwc_notifications(pool_for_nwc).await;
     });
 
-    // Generate admin password and print to stdout
-    let admin_password = generate_admin_password();
-    println!("🔐 ADMIN PASSWORD: {}", admin_password);
-    println!("💡 Save this password - it's required to access /admin");
+    // Get admin password from env var or generate one
+    let admin_password = std_env::var("ADMIN_PASSWORD").unwrap_or_else(|_| {
+        let generated = generate_admin_password();
+        println!("🔐 GENERATED ADMIN PASSWORD: {}", generated);
+        println!("💡 Save this password - it's required to access /admin");
+        println!("💡 Or set ADMIN_PASSWORD environment variable to use a static password");
+        generated
+    });
+    
+    if std_env::var("ADMIN_PASSWORD").is_ok() {
+        println!("🔐 Using ADMIN_PASSWORD from environment variable");
+    }
 
     let config = Arc::new(AppConfig {
         admin_password,
