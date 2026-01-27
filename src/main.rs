@@ -522,15 +522,35 @@ async fn subscribe_nwc_notifications(pool: Arc<SqlitePool>) {
                                             }
                                         };
                                         
-                                        // Process prism payment splits if this is a prism user
-                                        log::info!("Checking prism status: is_prism={} for user {}", is_prism_clone, user_id_clone);
-                                        if is_prism_clone {
+                                        // Get the invoice recipient's user details to check if THEY are a prism
+                                        // (not the NWC owner who might be different)
+                                        let invoice_user_id = invoice.user_id;
+                                        log::info!("Payment notification from NWC owner (user {}), but invoice belongs to user {}", user_id_clone, invoice_user_id);
+                                        
+                                        // Fetch the invoice user's details to check if they're a prism
+                                        let invoice_user = match sqlx::query_as::<_, crate::db::User>(
+                                            r#"SELECT id, nwc_uri, username, nostr_pubkey, domain, is_prism, created_at FROM users WHERE id = ?"#
+                                        )
+                                        .bind(invoice_user_id)
+                                        .fetch_one(pool_clone.as_ref())
+                                        .await {
+                                            Ok(u) => u,
+                                            Err(e) => {
+                                                warn!("Failed to fetch invoice user {}: {}", invoice_user_id, e);
+                                                return;
+                                            }
+                                        };
+                                        
+                                        // Process prism payment splits if the INVOICE USER is a prism
+                                        log::info!("Checking prism status: is_prism={} for invoice user {}", invoice_user.is_prism, invoice_user_id);
+                                        if invoice_user.is_prism {
                                             let amount_msats = invoice.amount as u64;
-                                            log::info!("User {} is a prism, processing payment split for {} msats", user_id_clone, amount_msats);
-                                            if let Err(e) = process_prism_payment(&pool_clone, user_id_clone, amount_msats, &nwc_secret_clone).await {
-                                                warn!("Failed to process prism payment for user {}: {}", user_id_clone, e);
+                                            log::info!("Invoice user {} is a prism, processing payment split for {} msats", invoice_user_id, amount_msats);
+                                            // Use the NWC secret from the NWC owner (user_id_clone) to make payments
+                                            if let Err(e) = process_prism_payment(&pool_clone, invoice_user_id, amount_msats, &nwc_secret_clone).await {
+                                                warn!("Failed to process prism payment for user {}: {}", invoice_user_id, e);
                                             } else {
-                                                log::info!("Successfully completed prism payment processing for user {}", user_id_clone);
+                                                log::info!("Successfully completed prism payment processing for user {}", invoice_user_id);
                                             }
                                         }
                                         
