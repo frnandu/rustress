@@ -508,7 +508,6 @@ async fn subscribe_nwc_notifications(pool: Arc<SqlitePool>) {
                                     let user_id_clone = user_id;
                                     let pool_clone = pool.clone();
                                     let nwc_secret_clone = nwc_secret.as_ref().clone();
-                                    let is_prism_clone = is_prism;
                                     tokio::spawn(async move {
                                         if let Err(e) = mark_invoice_settled(&pool_clone, &payment_hash, &preimage).await {
                                             warn!("Failed to mark invoice settled for user {}: {}", user_id_clone, e);
