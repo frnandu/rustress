@@ -471,7 +471,6 @@ async fn subscribe_nwc_notifications(pool: Arc<SqlitePool>) {
             }
         };
         let user_id = user.id;
-        let is_prism = user.is_prism;
         tokio::spawn(async move {
             // Create NWC client
             let uri = match NostrWalletConnectURI::from_str(&secret) {
