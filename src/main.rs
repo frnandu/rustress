@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::env as std_env;
 use std::str::FromStr;
 use std::sync::Arc;
-use tokio::time::{Duration, timeout};
+use tokio::time::{Duration, sleep, timeout};
 
 mod db;
 
@@ -453,49 +453,40 @@ async fn process_prism_payment(
     Ok(())
 }
 
-async fn subscribe_nwc_notifications(pool: Arc<SqlitePool>) {
-    let users = match get_all_users_with_secret(&pool).await {
-        Ok(u) => u,
-        Err(e) => {
-            warn!("Failed to load users for NWC subscription: {}", e);
-            return;
-        }
-    };
-    for user in users {
-        let pool = pool.clone();
-        let secret = match &user.nwc_uri {
-            Some(s) => s.clone(),
-            None => {
-                warn!("User {} has no NWC connection secret, skipping notifications", user.id);
-                continue;
-            }
-        };
-        let user_id = user.id;
-        tokio::spawn(async move {
-            // Create NWC client
-            let uri = match NostrWalletConnectURI::from_str(&secret) {
+fn spawn_nwc_notification_listener(pool: Arc<SqlitePool>, user_id: i64, secret: String) {
+    tokio::spawn(async move {
+        let secret_arc = Arc::new(secret);
+
+        loop {
+            let uri = match NostrWalletConnectURI::from_str(secret_arc.as_ref()) {
                 Ok(u) => u,
                 Err(e) => {
                     warn!("Invalid NWC URI for user {}: {}", user_id, e);
                     return;
                 }
             };
+
+            info!(
+                "Starting NWC notification listener for user {} (wallet pubkey: {}, relays: {})",
+                user_id,
+                uri.public_key,
+                uri.relays.len()
+            );
+
             let nwc = NWC::new(uri);
             if let Err(e) = nwc.subscribe_to_notifications().await {
                 warn!(
                     "Failed to subscribe to notifications for user {}: {}",
                     user_id, e
                 );
-                return;
+                sleep(Duration::from_secs(5)).await;
+                continue;
             }
-            
-            let secret_arc = Arc::new(secret);
-            
-            loop {
-                let pool_cloned = pool.clone();
-                let secret_cloned = secret_arc.clone();
-                let res = nwc
-                    .handle_notifications(move |notification| {
+
+            let pool_cloned = pool.clone();
+            let secret_cloned = secret_arc.clone();
+            let res = nwc
+                .handle_notifications(move |notification| {
                         let pool = pool_cloned.clone();
                         let nwc_secret = secret_cloned.clone();
                         async move {
@@ -674,15 +665,43 @@ async fn subscribe_nwc_notifications(pool: Arc<SqlitePool>) {
                         }
                     })
                     .await;
-                if let Err(e) = res {
-                    warn!(
-                        "Error handling NWC notification for user {}: {}",
-                        user_id, e
-                    );
-                    break;
-                }
+
+            if let Err(e) = res {
+                warn!(
+                    "Error handling NWC notification for user {}: {}",
+                    user_id, e
+                );
+            } else {
+                warn!(
+                    "NWC notification stream ended for user {}, reconnecting",
+                    user_id
+                );
             }
-        });
+
+            sleep(Duration::from_secs(5)).await;
+        }
+    });
+}
+
+async fn subscribe_nwc_notifications(pool: Arc<SqlitePool>) {
+    let users = match get_all_users_with_secret(&pool).await {
+        Ok(u) => u,
+        Err(e) => {
+            warn!("Failed to load users for NWC subscription: {}", e);
+            return;
+        }
+    };
+
+    for user in users {
+        let secret = match &user.nwc_uri {
+            Some(s) => s.clone(),
+            None => {
+                warn!("User {} has no NWC connection secret, skipping notifications", user.id);
+                continue;
+            }
+        };
+
+        spawn_nwc_notification_listener(pool.clone(), user.id, secret);
     }
 }
 
@@ -835,6 +854,12 @@ async fn admin_add_user(
                     }
                 }
             }
+
+            if let Some(secret) = user_req.connection_secret.clone() {
+                if !secret.trim().is_empty() {
+                    spawn_nwc_notification_listener(pool.get_ref().clone(), user.id, secret);
+                }
+            }
             
             let lightning_address = format!("{}@{}", user.username, user.domain);
             HttpResponse::Ok().json(serde_json::json!({"lightning_address": lightning_address, "is_prism": is_prism}))
@@ -945,6 +970,12 @@ async fn admin_update_prism(
         if let Err(e) = update_user_details(&pool, user.id, nwc_to_update, nostr_to_update).await {
             return HttpResponse::InternalServerError()
                 .json(serde_json::json!({"status": "ERROR", "reason": e.to_string()}));
+        }
+
+        if let Some(new_secret) = &user_req.nwc_uri {
+            if !new_secret.trim().is_empty() && user.nwc_uri.as_deref() != Some(new_secret.as_str()) {
+                spawn_nwc_notification_listener(pool.get_ref().clone(), user.id, new_secret.clone());
+            }
         }
     }
     
