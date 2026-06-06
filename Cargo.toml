@@ -18,7 +18,7 @@ env_logger = "0.10"
 rand = "0.8"
 chrono = { version = "0.4", features = ["serde"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-nostr-relay-pool = { git = "https://github.com/rust-nostr/nostr" }
-nostr-sdk = { git = "https://github.com/rust-nostr/nostr" }
+nostr-relay-pool = { git = "https://github.com/rust-nostr/nostr", rev = "684c69528c3453b4515c0fadf56d72e25286fbf6" }
+nostr-sdk = { git = "https://github.com/rust-nostr/nostr", rev = "684c69528c3453b4515c0fadf56d72e25286fbf6" }
 bech32 = "0.11"
 reqwest = { version = "0.11", features = ["json"] }
