@@ -343,19 +343,25 @@ pub async fn insert_invoice(
     Ok(rec)
 }
 
-pub async fn mark_invoice_settled(
+pub async fn claim_invoice_settlement(
     pool: &SqlitePool,
     payment_hash: &str,
+    user_id: i64,
     preimage: &str,
-) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        r#"UPDATE invoices SET preimage = ?, settled_at = CURRENT_TIMESTAMP WHERE payment_hash = ?"#,
+) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query(
+        r#"
+        UPDATE invoices
+        SET preimage = ?, settled_at = CURRENT_TIMESTAMP
+        WHERE payment_hash = ? AND user_id = ? AND settled_at IS NULL
+        "#,
     )
     .bind(preimage)
     .bind(payment_hash)
+    .bind(user_id)
     .execute(pool)
     .await?;
-    Ok(())
+    Ok(result.rows_affected() == 1)
 }
 
 pub async fn get_invoice_by_payment_hash(
@@ -459,4 +465,63 @@ pub async fn get_pending_zap_receipt_invoices(
     .bind(limit)
     .fetch_all(pool)
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        claim_invoice_settlement, create_user, get_invoice_by_payment_hash, insert_invoice,
+        run_migrations,
+    };
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    #[tokio::test]
+    async fn invoice_settlement_claim_is_owner_bound_and_idempotent() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        run_migrations(&pool).await;
+
+        let owner = create_user(&pool, None, "owner", None, "example.com", true)
+            .await
+            .unwrap();
+        let other = create_user(&pool, None, "other", None, "example.com", false)
+            .await
+            .unwrap();
+        insert_invoice(
+            &pool,
+            owner.id,
+            100_000,
+            "test",
+            "lnbc-test",
+            "payment-hash",
+            "{}",
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            !claim_invoice_settlement(&pool, "payment-hash", other.id, "wrong-preimage")
+                .await
+                .unwrap()
+        );
+        assert!(
+            claim_invoice_settlement(&pool, "payment-hash", owner.id, "preimage")
+                .await
+                .unwrap()
+        );
+        assert!(
+            !claim_invoice_settlement(&pool, "payment-hash", owner.id, "replayed-preimage")
+                .await
+                .unwrap()
+        );
+
+        let invoice = get_invoice_by_payment_hash(&pool, "payment-hash")
+            .await
+            .unwrap();
+        assert_eq!(invoice.preimage.as_deref(), Some("preimage"));
+        assert!(invoice.settled_at.is_some());
+    }
 }

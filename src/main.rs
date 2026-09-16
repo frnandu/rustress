@@ -22,10 +22,10 @@ mod db;
 
 use crate::db::{
     Invoice, ZAP_RECEIPT_STATUS_FAILED, ZAP_RECEIPT_STATUS_PENDING, ZAP_RECEIPT_STATUS_PUBLISHED,
-    add_prism_split, create_user, delete_prism_splits_by_user_id,
+    add_prism_split, claim_invoice_settlement, create_user, delete_prism_splits_by_user_id,
     delete_user_by_username_and_domain, get_all_users_with_secret, get_db_pool,
     get_invoice_by_payment_hash, get_pending_zap_receipt_invoices, get_prism_splits_by_user_id,
-    get_user_by_username_and_domain, insert_invoice, mark_invoice_settled, run_migrations,
+    get_user_by_username_and_domain, insert_invoice, run_migrations,
     update_invoice_metadata_with_zap_receipt, update_invoice_zap_receipt_state,
     update_user_details, update_user_prism_status,
 };
@@ -948,11 +948,22 @@ async fn handle_invoice_settlement(
     preimage: String,
     nwc_secret: String,
 ) {
-    if let Err(error) = mark_invoice_settled(&pool, &payment_hash, &preimage).await {
-        warn!(
-            "Failed to mark invoice settled for user {} and payment_hash {}: {}",
-            user_id, payment_hash, error
-        );
+    match claim_invoice_settlement(&pool, &payment_hash, user_id, &preimage).await {
+        Ok(true) => {}
+        Ok(false) => {
+            info!(
+                "Ignoring duplicate or foreign payment notification for NWC owner {} and payment_hash {}",
+                user_id, payment_hash
+            );
+            return;
+        }
+        Err(error) => {
+            warn!(
+                "Failed to claim invoice settlement for user {} and payment_hash {}: {}",
+                user_id, payment_hash, error
+            );
+            return;
+        }
     }
 
     let invoice = match get_invoice_by_payment_hash(&pool, &payment_hash).await {
